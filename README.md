@@ -28,3 +28,4 @@ This an application to set in-use COMM port states.
 ### HISTORY ###
 
 * 20200207 - Initial repository.
+* 20200208 - Added Ports In-Use listing

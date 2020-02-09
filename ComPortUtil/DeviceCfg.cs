@@ -10,23 +10,39 @@ namespace ForceDefaultPort
     class DeviceCfg
     {
         [DllImport("MSPorts.dll", SetLastError = true)]
+        //LONG ComDBOpen(PHCOMDB PHComDB);
         static extern int ComDBOpen(out IntPtr hComDB);
-        [DllImport("MSPorts.dll")]
-        public static extern long ComDBClose(UInt32 PHCOMDB);
-        [DllImport("MSPorts.dll")]
-        public static extern long ComDBClaimPort(IntPtr hComDB, int ComNumber, bool ForceClaim, out bool Force);
-        [DllImport("MSPorts.dll")]
-        public static extern long ComDBReleasePort(UInt32 PHCOMDB, int ComNumber);
+        [DllImport("MSPorts.dll", SetLastError = true)]
+        //LONG ComDBClose(HCOMDB HComDB);
+        static extern long ComDBClose(IntPtr HCOMDB);
+        [DllImport("MSPorts.dll", SetLastError = true)]
+        //LONG ComDBGetCurrentPortUsage(IN HCOMDB HComDB, IN OUT PBYTE Buffer, IN DWORD BufferSize, IN ULONG ReportType, OUT LPDWORD MaxPortsReported);
+        static extern long ComDBGetCurrentPortUsage(IntPtr HCOMDB, [In, Out] byte[] buffer, int bufferSize, int reportType, [Out] out int maxPortsReported);
+        [DllImport("MSPorts.dll", CallingConvention = CallingConvention.Cdecl, SetLastError = true)]
+        //LONG ComDBClaimPort(HCOMDB HComDB, DWORD  ComNumber, BOOL ForceClaim, PBOOL  Forced);
+        static extern long ComDBClaimPort(IntPtr HCOMDB, int ComNumber, [MarshalAs(UnmanagedType.Bool)] bool ForceClaim, [MarshalAs(UnmanagedType.Bool)] out bool Force);
+        [DllImport("MSPorts.dll", SetLastError = true)]
+        //LONG ComDBReleasePort(HCOMDB HComDB, DWORD ComNumber);
+        static extern long ComDBReleasePort(IntPtr HCOMDB, int ComNumber);
+        [DllImport("MSPorts.dll", SetLastError = true)]
+        //LONG ComDBClaimNextFreePort(HCOMDB HComDB, LPDWORD ComNumber);
+        static extern long ComDBClaimNextFreePort(UInt32 HCOMDB, IntPtr ComNumber);
+
         // Rescan for hardware changes
         [DllImport("CfgMgr32.dll", SetLastError = true)]
         public static extern int CM_Locate_DevNodeA(ref int pdnDevInst, string pDeviceID, int ulFlags);
-
         [DllImport("CfgMgr32.dll", SetLastError = true)]
         public static extern int CM_Reenumerate_DevNode(int dnDevInst, int ulFlags);
 
         public const int CM_LOCATE_DEVNODE_NORMAL = 0x00000000;
         public const int CM_REENUMERATE_NORMAL = 0x00000000;
         public const int CR_SUCCESS = 0x00000000;
+
+        public const int COMDB_MIN_PORTS_ARBITRATED = 256;
+        public const int COMDB_MAX_PORTS_ARBITRATED = 4096;
+
+        public const int CDB_REPORT_BITS = 0x00000000;
+        public const int CDB_REPORT_BYTES = 0x00000001;
 
         /********************************************************************************************************/
         // ATTRIBUTES
@@ -59,6 +75,11 @@ namespace ForceDefaultPort
                 //}
                 ReportAllCommPorts();
             }
+        }
+
+        public void ListPortsInUse(int start, int end)
+        {
+            ListInUsePorts(start, end);
         }
 
         public void SetPortsInUse(int start, int end)
@@ -202,11 +223,47 @@ namespace ForceDefaultPort
             int state = ComDBOpen(out IntPtr PHCOMDB);
             if (PHCOMDB != null && state == (int)ERROR_STATUS.ERROR_SUCCESS)
             {
+                Console.WriteLine("SET PORT(S) IN USE ------------------------------------------------------------------------\r\n");
+
                 for (int port = start; port <= end; port++)
                 {
                     long result = ComDBClaimPort(PHCOMDB, port, true, out bool forced);
                     Console.WriteLine($"device: COM{port} forced in-use with status={result}.");
                 }
+                long dsfdf1 = ComDBClose(PHCOMDB);
+            }
+        }
+
+        private void ListInUsePorts(int start, int end)
+        {
+            int state = ComDBOpen(out IntPtr PHCOMDB);
+            if (PHCOMDB != null && state == (int)ERROR_STATUS.ERROR_SUCCESS)
+            {
+                int maxPortsReported = 0;
+                byte[] buffer = null;
+                long result = ComDBGetCurrentPortUsage(PHCOMDB, buffer, 0, CDB_REPORT_BYTES, out maxPortsReported);
+                if (result == (int)ERROR_STATUS.ERROR_SUCCESS)
+                {
+                    buffer = new byte[maxPortsReported];
+                    result = ComDBGetCurrentPortUsage(PHCOMDB, buffer, maxPortsReported, CDB_REPORT_BYTES, out maxPortsReported);
+                    if (result == (int)ERROR_STATUS.ERROR_SUCCESS)
+                    {
+                        Console.WriteLine("LIST PORT(S) IN USE ----------------------------------------------------------------------\r\n");
+                        // port number is an integer that ranges from 1 to COMDB_MAX_PORTS_ARBITRATED
+                        for (int port = start - 1; port < end; port++)
+                        {
+                            if (buffer[port] == 0x01)
+                            {
+                                Console.WriteLine($"COM{port + 1}");
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"ComDBGetCurrentPortUsage: error={result}");
+                }
+                long dsfdf1 = ComDBClose(PHCOMDB);
             }
         }
 
@@ -219,13 +276,13 @@ namespace ForceDefaultPort
                 if (PHCOMDB != null && state == (int)ERROR_STATUS.ERROR_SUCCESS)
                 {
                     Console.WriteLine("");
-                    Console.WriteLine("CLEAR COMMPORT(S) ----------------------------------------------------------------");
+                    Console.WriteLine("CLEAR PORT(S) IN USE ---------------------------------------------------------------------\r\n");
                     for (int index = first; index <= last; index++)
                     {
-                        long status = ComDBReleasePort((UInt32)PHCOMDB, index);
+                        long status = ComDBReleasePort(PHCOMDB, index);
                         Console.WriteLine($"device: COM{index} released with status={status}.");
                     }
-                    long dsfdf1 = ComDBClose((UInt32)PHCOMDB);
+                    long dsfdf1 = ComDBClose(PHCOMDB);
                 }
             }
             catch (Exception ex)
@@ -256,6 +313,8 @@ namespace ForceDefaultPort
     enum ERROR_STATUS
     {
         ERROR_SUCCESS = 0,
-        ERROR_ACCESS_DENIED = 5
+        ERROR_ACCESS_DENIED = 5,
+        ERROR_INVALID_PARAMETER = 87,
+        ERROR_NOT_CONNECTED = 2250
     };
 }
